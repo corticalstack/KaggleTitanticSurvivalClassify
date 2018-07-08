@@ -14,7 +14,8 @@ class Hyperopt_knn:
         self.clf = None
         self.best_acc = 0
         self.space = {
-              'n_neighbors': hp.choice('n_neighbors', range(1, 100))
+              'n_neighbors': hp.choice('n_neighbors', range(1, 100)),
+              'leaf_size': hp.choice('leaf_size', range(1, 40)),
                 }
         self.max_evals = 50
 
