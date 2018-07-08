@@ -1,18 +1,23 @@
 import warnings
+import numpy as np
 from hyperopt import Trials, STATUS_OK, tpe, hp, fmin, space_eval
 from xgboost import XGBClassifier
 from sklearn.model_selection import cross_val_score
 
 class Hyperopt_xbc:
-    def __init__(self, X, y):
+    def __init__(self, X, y, seed):
+        self.name = 'XGBoost'
+        self.name_short = 'XBC'
         self.X = X
         self.y = y
+        self.seed = seed        
         self.clf = None
         self.best_acc = 0
         self.space = {
+                'objective' : 'binary:logistic',
                 'max_depth' : hp.choice('max_depth', range(5, 30, 1)),
                 'learning_rate' : hp.quniform('learning_rate', 0.01, 0.5, 0.01),
-                'n_estimators' : hp.choice('n_estimators', range(20, 205, 5)),
+                'n_estimators' : hp.choice('n_estimators', range(10, 500, 10)),
                 'booster': hp.choice('booster', ['gbtree', 'gblinear', 'dart']),
                 'gamma' : hp.quniform('gamma', 0, 0.50, 0.01),
                 'min_child_weight' : hp.quniform('min_child_weight', 1, 10, 1),
@@ -25,7 +30,7 @@ class Hyperopt_xbc:
         warnings.filterwarnings(action='ignore', category=DeprecationWarning)
         self.clf = XGBClassifier(**params)
         self.clf.fit(self.X, self.y)
-        return cross_val_score(self.clf, self.X, self.y, cv=10).mean()
+        return cross_val_score(self.clf, self.X, self.y, scoring='roc_auc', cv=10).mean()
     
     def f(self, params):
         acc = self.train_test(params)
@@ -35,6 +40,6 @@ class Hyperopt_xbc:
     
     def best(self):
         trials = Trials()
-        best = fmin(self.f, self.space, algo=tpe.suggest, max_evals = self.max_evals, trials=trials)
+        best = fmin(self.f, self.space, algo=tpe.suggest, max_evals = self.max_evals, rstate= np.random.RandomState(self.seed), trials=trials)
         self.clf.set_params(**best)
-        return self.clf, space_eval(self.space, best), self.best_acc
+        return self.clf, self.name, self.name_short, space_eval(self.space, best), self.best_acc

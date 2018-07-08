@@ -6,7 +6,7 @@ from keras.layers import Dense
 from sklearn.model_selection import cross_val_score
 
 class Hyperopt_keras:
-    def __init__(self, X, y):
+    def __init__(self, X, y, seed):
         self.X = X
         self.y = y
         self.clf = None
@@ -16,7 +16,8 @@ class Hyperopt_keras:
                #'kernel': hp.choice('kernel', ['linear', 'sigmoid', 'poly', 'rbf']),
                #'gamma': hp.uniform('gamma', 0, 20)
                'kernel': hp.choice('kernel', ['poly', 'rbf']),
-               'gamma': hp.uniform('gamma', 0, 5)
+               'gamma': hp.uniform('gamma', 0, 5),
+               'seed': seed
                 }
         self.max_evals = 3
 

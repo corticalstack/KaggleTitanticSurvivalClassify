@@ -1,23 +1,19 @@
 # Jon-Paul Boyd - Kaggle - Classifier to Predict Titantic Survial 
 # Importing the libraries
-import sys
-import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-import math
 import seaborn as sns
 import re as re
-
-
-from sklearn.model_selection import cross_val_score
+from sklearn.metrics import confusion_matrix
+from sklearn.preprocessing import LabelEncoder
 from hyperopt_dtc import Hyperopt_dtc
 from hyperopt_rfc import Hyperopt_rfc
 from hyperopt_gbc import Hyperopt_gbc
 from hyperopt_xbc import Hyperopt_xbc
 from hyperopt_knn import Hyperopt_knn
 
-
-random_state = 0
+seed = 1807
+default_survival = 0.5
 
 def get_title(name):
     title_search = re.search(' ([A-Za-z]+)\.', name)
@@ -26,18 +22,10 @@ def get_title(name):
     return ""
 
 
-def set_age_master(input_dataset):
-    for index, row in input_dataset.iterrows():
-        if 'Master' in row['Title'] and math.isnan(row['Age']):
-            input_dataset.at[index, 'Age'] = 11
-
-    return input_dataset
-
-
 # Importing the datasets
 dataset_train = pd.read_csv('train.csv')
 dataset_test = pd.read_csv('test.csv')
-full_data = [dataset_train, dataset_test]
+dataset_full = dataset_train.append(dataset_test)
 
 
 # Distribution Analysis on training set
@@ -69,56 +57,88 @@ grid = sns.FacetGrid(dataset_train, row='Embarked', col='Survived', size=2.2, as
 grid.map(sns.barplot, 'Sex', 'Fare', alpha=.5, ci=None)
 grid.add_legend()
 plt.show()
-
+print('_'*80)
 
 # Feature Engineering
-for dataset in full_data:
-    dataset['FamilySize'] = dataset['SibSp'] + dataset['Parch'] + 1
-print(dataset_train[['FamilySize', 'Survived']].groupby(['FamilySize'], as_index=False).mean().sort_values(by='Survived', ascending=False), '_'*80, sep='\n')
+dataset_full['FamilySize'] = dataset_full['SibSp'] + dataset_full['Parch'] + 1
+print(dataset_full[['FamilySize', 'Survived']][:891].groupby(['FamilySize'], as_index=False).mean().sort_values(by='Survived', ascending=False), '_'*80, sep='\n')
 
-for dataset in full_data:
-    dataset['IsAlone'] = 0
-    dataset.loc[dataset['FamilySize'] == 1, 'IsAlone'] = 1
-print(dataset_train[['IsAlone', 'Survived']].groupby(['IsAlone'], as_index=False).mean().sort_values(by='Survived', ascending=False), '_'*80, sep='\n')
+dataset_full['IsAlone'] = 0
+dataset_full.loc[dataset_full['FamilySize'] == 1, 'IsAlone'] = 1
+print(dataset_full[['IsAlone', 'Survived']][:891].groupby(['IsAlone'], as_index=False).mean().sort_values(by='Survived', ascending=False), '_'*80, sep='\n')
 
-for dataset in full_data:
-    dataset['Title'] = dataset['Name'].apply(get_title)
-
-print(pd.crosstab(dataset_train['Title'], dataset_train['Sex']))
+dataset_full['Title'] = dataset_full['Name'].apply(get_title)
+print(pd.crosstab(dataset_full['Title'][:891], dataset_full['Sex'][:891]), '_'*80, sep='\n')
 
 
-for dataset in full_data:
-    dataset['Title'] = dataset['Title'].replace(['Lady', 'Countess','Capt', 'Col', 'Don', 'Dr', 'Major', 'Rev', 'Sir', \
+dataset_full['Title'] = dataset_full['Title'].replace(['Lady', 'Countess','Capt', 'Col', 'Don', 'Dr', 'Major', 'Rev', 'Sir', \
                                                  'Jonkheer', 'Dona'], 'Rare')
-    dataset['Title'] = dataset['Title'].replace('Mlle', 'Miss')
-    dataset['Title'] = dataset['Title'].replace('Ms', 'Miss')
-    dataset['Title'] = dataset['Title'].replace('Mme', 'Mrs')
+dataset_full['Title'] = dataset_full['Title'].replace('Mlle', 'Miss')
+dataset_full['Title'] = dataset_full['Title'].replace('Ms', 'Miss')
+dataset_full['Title'] = dataset_full['Title'].replace('Mme', 'Mrs')
 
-print(dataset_train[['Title', 'Survived']].groupby(['Title'], as_index=False).mean())
+print(dataset_full[['Title', 'Survived']][:891].groupby(['Title'], as_index=False).mean(), '_'*80, sep='\n')
 
-dataset_train = set_age_master(dataset_train)
-dataset_train[['Embarked']] = dataset_train[['Embarked']].fillna('S')
-dataset_test = set_age_master(dataset_test)
-dataset_test[['Embarked']] = dataset_test[['Embarked']].fillna('S')
+titles = ['Master', 'Miss', 'Mr', 'Mrs', 'Rare']
+for title in titles:
+    age_to_impute = dataset_full.groupby('Title')['Age'].median()[titles.index(title)]
+    dataset_full.loc[(dataset_full['Age'].isnull()) & (dataset_full['Title'] == title), 'Age'] = age_to_impute
+    
+dataset_full['AgeBin'] = pd.qcut(dataset_full['Age'], 4)
 
-dataset_train = pd.get_dummies(dataset_train, columns=['Pclass', 'Sex', 'Embarked', 'Title'], drop_first=True)
-dataset_test = pd.get_dummies(dataset_test, columns=['Pclass', 'Sex', 'Embarked', 'Title'], drop_first=True)
+label = LabelEncoder()
+dataset_full['AgeBin_Code'] = label.fit_transform(dataset_full['AgeBin'])
+
+dataset_full[['Embarked']] = dataset_full[['Embarked']].fillna('S')
+dataset_full = pd.get_dummies(dataset_full, columns=['Pclass', 'Sex', 'Title', 'Embarked'], drop_first=True)
 
 
-X_train = dataset_train.iloc[:, [3, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]].values
+dataset_full['Last_Name'] = dataset_full['Name'].apply(lambda x: str.split(x, ",")[0])
+dataset_full['Fare'].fillna(dataset_full['Fare'].mean(), inplace=True)
+
+
+dataset_full['Family_Survival'] = default_survival
+
+for grp, grp_df in dataset_full[['Survived','Name', 'Last_Name', 'Fare', 'Ticket', 'PassengerId',
+                           'SibSp', 'Parch', 'Age', 'Cabin']].groupby(['Last_Name', 'Fare']):    
+    if (len(grp_df) != 1):
+        # A Family group is found.
+        for ind, row in grp_df.iterrows():
+            smax = grp_df.drop(ind)['Survived'].max()
+            smin = grp_df.drop(ind)['Survived'].min()
+            passID = row['PassengerId']
+            if (smax == 1.0):
+                dataset_full.loc[dataset_full['PassengerId'] == passID, 'Family_Survival'] = 1
+            elif (smin==0.0):
+                dataset_full.loc[dataset_full['PassengerId'] == passID, 'Family_Survival'] = 0
+
+print("Number of passengers with family survival information:", 
+      dataset_full.loc[dataset_full['Family_Survival']!=0.5].shape[0])
+
+for _, grp_df in dataset_full.groupby('Ticket'):
+    if (len(grp_df) != 1):
+        for ind, row in grp_df.iterrows():
+            if (row['Family_Survival'] == 0) | (row['Family_Survival']== 0.5):
+                smax = grp_df.drop(ind)['Survived'].max()
+                smin = grp_df.drop(ind)['Survived'].min()
+                passID = row['PassengerId']
+                if (smax == 1.0):
+                    dataset_full.loc[dataset_full['PassengerId'] == passID, 'Family_Survival'] = 1
+                elif (smin==0.0):
+                    dataset_full.loc[dataset_full['PassengerId'] == passID, 'Family_Survival'] = 0
+                        
+print("Number of passenger with family/group survival information: " 
+      +str(dataset_full[dataset_full['Family_Survival']!=0.5].shape[0]))
+
+
+dataset_full.drop(['Name', 'PassengerId', 'Fare', 'SibSp', 'Parch', 'Ticket', 'Cabin', 'Age', 'AgeBin', 'Last_Name'], axis = 1, inplace = True)
+    
+
+X_train_full = dataset_full[:891]
 y_train = dataset_train.iloc[:, 1].values
-X_test = dataset_test.iloc[:,  [2, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]].values
-
-
-# Taking care of missing data
-from sklearn.preprocessing import Imputer
-imputer_train = Imputer(missing_values='NaN', strategy='mean', axis=0)
-imputer_train = imputer_train.fit(X_train[:, 0:1])
-X_train[:, 0:1] = imputer_train.transform(X_train[:, 0:1])
-
-imputer_test = Imputer(missing_values='NaN', strategy='mean', axis=0)
-imputer_test = imputer_test.fit(X_test[:, 0:1])
-X_test[:, 0:1] = imputer_test.transform(X_test[:, 0:1])
+X_train = X_train_full.drop(['Survived'], axis = 1)
+X_test_full = dataset_full[891:]
+X_test = X_test_full.drop(['Survived'], axis = 1)
 
 
 # Feature Scaling
@@ -129,50 +149,68 @@ X_train = sc_train.fit_transform(X_train)
 X_test = sc_test.fit_transform(X_test)
 
 
+models = pd.DataFrame(columns=['Name', 'Short', 'Score', 'Params', 'Clf', 'Pred'])
+i = 0
+
+
 # Hyperparameter optimisation, fit and score
-hyperopt_dtc = Hyperopt_dtc(X_train, y_train)
-dtc, best_params, best_dtc_acc = hyperopt_dtc.best()
-print("DTC best acc ", best_dtc_acc)
-y_pred_dtc = dtc.predict(X_test)
+hyperopt_dtc = Hyperopt_dtc(X_train, y_train, seed)
+clf, name, name_short, best_params, score = hyperopt_dtc.best()
+y_pred = clf.predict(X_test)
+models.loc[i] = pd.Series(dict(
+            Name=name, Short=name_short, Score=score, Params=best_params, Clf=clf, Pred=y_pred
+        ))
+i += 1
 
-hyperopt_rfc = Hyperopt_rfc(X_train, y_train)
-rfc, best_params, best_rfc_acc = hyperopt_rfc.best()
-print("RFC best acc ", best_rfc_acc)
-y_pred_rfc = rfc.predict(X_test)
+hyperopt_rfc = Hyperopt_rfc(X_train, y_train, seed)
+clf, name, name_short, best_params, score = hyperopt_rfc.best()
+y_pred = clf.predict(X_test)
+models.loc[i] = pd.Series(dict(
+            Name=name, Short=name_short, Score=score, Params=best_params, Clf=clf, Pred=y_pred
+        ))
+i += 1
 
-hyperopt_gbc = Hyperopt_gbc(X_train, y_train)
-gbc, best_params, best_gbc_acc = hyperopt_gbc.best()
-print("GBC best acc ", best_gbc_acc)
-y_pred_gbc = gbc.predict(X_test)
+hyperopt_gbc = Hyperopt_gbc(X_train, y_train, seed)
+clf, name, name_short, best_params, score = hyperopt_gbc.best()
+y_pred = clf.predict(X_test)
+models.loc[i] = pd.Series(dict(
+            Name=name, Short=name_short, Score=score, Params=best_params, Clf=clf, Pred=y_pred
+        ))
+i += 1
 
-hyperopt_xbc = Hyperopt_xbc(X_train, y_train)
-xbc, best_params, best_xbc_acc = hyperopt_xbc.best()
-print("XBC best acc ", best_xbc_acc)
-y_pred_xbc = xbc.predict(X_test)
+hyperopt_xbc = Hyperopt_xbc(X_train, y_train, seed)
+clf, name, name_short, best_params, score = hyperopt_xbc.best()
+y_pred = clf.predict(X_test)
+models.loc[i] = pd.Series(dict(
+            Name=name, Short=name_short, Score=score, Params=best_params, Clf=clf, Pred=y_pred
+        ))
+i += 1
 
-hyperopt_knn = Hyperopt_knn(X_train, y_train)
-knn, best_params, best_knn_acc = hyperopt_knn.best()
-print("KNN best acc ", best_knn_acc)
-y_pred_knn = knn.predict(X_test)
+hyperopt_knn = Hyperopt_knn(X_train, y_train, seed)
+clf, name, name_short, best_params, score = hyperopt_knn.best()
+y_pred = clf.predict(X_test)
+models.loc[i] = pd.Series(dict(
+            Name=name, Short=name_short, Score=score, Params=best_params, Clf=clf, Pred=y_pred
+        ))
+i += 1
 
 
-models = pd.DataFrame({
-    'Model': ['Decision Tree', 'Random Forest', 'Gradient Boosting', 'XBC', 'KNN'],
-    'Acc': [best_dtc_acc, best_rfc_acc, best_gbc_acc, best_xbc_acc, best_knn_acc]})
-models.sort_values(by='Acc', ascending=True)
-print(models)
+# Output model results
+models.sort_values(by=['Score'], ascending=False, inplace=True)
+for index, row in models.iterrows():
+    print(row['Score'], row['Name'], row['Short'], row['Params'])
 
 
 # Making the Confusion Matrix
-from sklearn.metrics import confusion_matrix
 #cm = confusion_matrix(Y_train, y_pred)
 # Accuracy = correct divided by total
 #accuracy = (cm[0, 0] + cm[1, 1]) / (cm[0, 0] + cm[0, 1] + cm[1, 0] + cm[1, 1])
 
 
+# Output best prediction
 submission = pd.DataFrame({
         "PassengerId": dataset_test["PassengerId"],
-        "Survived": y_pred_xbc
+        "Survived": models['Pred'].iloc[0]
     })
 
 submission.to_csv('test_set_prediction.csv', index=False)
